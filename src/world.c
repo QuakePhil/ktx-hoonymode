@@ -738,6 +738,9 @@ void FirstFrame	( )
 	RegisterCvarEx("k_spm_glow", "0");
 	RegisterCvarEx("k_spm_custom_model", "0");
 // { race
+	RegisterCvarEx("k_hoonymode", "0");
+// }
+// { race
 	RegisterCvarEx("k_race", "0");
 	RegisterCvarEx("k_race_custom_models", "0");
 	RegisterCvarEx("k_race_autorecord", "0");
@@ -1250,7 +1253,8 @@ void FixRules ( )
 	{
     	if( (timelimit == 0 && fraglimit == 0) || timelimit > k_tt || timelimit < 0 )
     	{
-        	cvar_fset( "timelimit", timelimit = k_tt ); // sensible default if no max set
+        	if (!isHoonyMode()) cvar_fset( "timelimit", timelimit = k_tt ); // sensible default if no max set
+// note: hoonymode works with fraglimit = 0, and timelimit = 0, and manages the game by frags directly
     	}
 	}
 	else

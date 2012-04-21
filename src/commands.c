@@ -350,6 +350,8 @@ const char CD_NODESC[] = "no desc";
 #define CD_FREEZE     "(un)freeze the map"
 #define CD_RPICKUP    "vote random team pickup"
 #define CD_1ON1       "duel settings"
+#define CD_1ON1HM     "HoonyMode settings"
+#define CD_HMSTATS    "show stats per hoonymode point"
 #define CD_2ON1       "2 on 2 settings"
 #define CD_3ON1       "3 on 3 settings"
 #define CD_4ON1       "4 on 4 settings"
@@ -663,6 +665,7 @@ cmd_t cmds[] = {
 	{ "captain",     VoteCaptain,               0    , CF_PLAYER, CD_CAPTAIN },
 	{ "freeze",      ToggleFreeze,              0    , CF_PLAYER | CF_SPC_ADMIN, CD_FREEZE },
 	{ "rpickup",     RandomPickup,              0    , CF_PLAYER | CF_SPC_ADMIN, CD_RPICKUP },
+	{ "hmstats",     HM_stats_show,             0    , CF_BOTH | CF_MATCHLESS, CD_HMSTATS },
 
 	{ "1on1",        DEF(UserMode),             1    , CF_PLAYER | CF_SPC_ADMIN, CD_1ON1 },
 	{ "2on2",        DEF(UserMode),             2    , CF_PLAYER | CF_SPC_ADMIN, CD_2ON1 },
@@ -671,6 +674,7 @@ cmd_t cmds[] = {
 	{ "10on10",      DEF(UserMode),             5    , CF_PLAYER | CF_SPC_ADMIN, CD_10ON10 },
 	{ "ffa",         DEF(UserMode),             6	 , CF_PLAYER | CF_SPC_ADMIN, CD_FFA },
 	{ "ctf",         DEF(UserMode),             7    , CF_PLAYER | CF_SPC_ADMIN, CD_CTF },
+	{ "hoonymode",   DEF(UserMode),             8    , CF_PLAYER | CF_SPC_ADMIN, CD_1ON1HM },
 
 	{ "practice",    TogglePractice,            0    , CF_PLAYER | CF_SPC_ADMIN, CD_PRACTICE },
 	{ "wp_reset",    Wp_Reset,                  0    , CF_PLAYER, CD_WP_RESET },
@@ -2182,9 +2186,14 @@ void FragsDown()
 	if ( match_in_progress )
 		return;
 
-	fraglimit -= 10;
-
-	fraglimit = bound(0, fraglimit, 100);
+	if ( fraglimit == 1 ) // allow fraglimit "1" (instead of going from 10 directly to 0) as a type of minimal hoonymode
+		fraglimit = 0;
+	else if ( fraglimit == 0)
+		fraglimit = 0; // avoid cycling between 0 and 1 (this happens due to below shortcut using bound())
+	else {
+		fraglimit -= 10;
+		fraglimit = bound(1, fraglimit, 100);
+	}
 
 	if ( timelimit <= 0 && fraglimit <= 0 ) {
 		G_sprint(self, 2, "You need some timelimit or fraglimit at least\n");
@@ -2956,6 +2965,7 @@ const char common_um_init[] =
 	"k_clan_arena 0\n"			// disable Clan Arena by default
 	"k_rocketarena 0\n"			// disable Rocket Arena by default
 	"k_race 0\n"				// disable Race  by default
+	"k_hoonymode 0\n"			// disable HoonyMode by default
 
 	"k_spec_info 1\n"			// allow spectators receive took info during game
 	"k_midair 0\n"				// midair off
@@ -2992,6 +3002,24 @@ const char _1on1_um_init[] =
 	"maxclients 2\n"			// duel = two players
 	"k_maxclients 2\n"			// duel = two players
 	"timelimit  10\n"			// 10 minute rounds
+	"teamplay   0\n"			// hurt yourself, no teammates here
+	"deathmatch 3\n"			// weapons stay
+	"k_overtime 1\n"			// overtime type = time based
+	"k_exttime 3\n"				// overtime 3mins
+	"k_pow 0\n"					// powerups
+	"k_membercount 0\n"			// no efect in duel
+	"k_lockmin 0\n"				// no efect in duel
+	"k_lockmax 0\n"				// no efect in duel
+	"k_mode 1\n";				//
+
+const char _1on1hm_um_init[] =
+	"coop 0\n"					// no coop
+	"maxclients 2\n"			// duel = two players
+	"k_maxclients 2\n"			// duel = two players
+	"timelimit  10\n"			// 10 minute rounds
+	"fraglimit  0\n"                        // hoonymode - fraglimit 0 (but every 1 frag we respawn)
+	"timelimit  0\n"                        // hoonymode - timelimit 10
+	"k_hoonymode 1\n"
 	"teamplay   0\n"			// hurt yourself, no teammates here
 	"deathmatch 3\n"			// weapons stay
 	"k_overtime 1\n"			// overtime type = time based
@@ -3111,7 +3139,8 @@ usermode um_list[] =
 	{ "4on4",	"\x96 on \x96",			_4on4_um_init,		UM_4ON4},
 	{ "10on10",	"\x93\x92 on \x93\x92",	_10on10_um_init,	UM_10ON10},
 	{ "ffa",	"ffa",					ffa_um_init,		UM_FFA},
-	{ "ctf",	"ctf",					ctf_um_init,		UM_CTF}
+	{ "ctf",	"ctf",					ctf_um_init,		UM_CTF},
+	{ "hoonymode",	"HoonyMode",				_1on1hm_um_init,	UM_1ON1HM}
 };
 
 int um_cnt = sizeof (um_list) / sizeof (um_list[0]);
@@ -4630,11 +4659,12 @@ void agree_on_map ( )
 char *lastscores2str( lsType_t lst )
 {
 	switch( lst ) {
-		case lsDuel: return "duel";
-		case lsTeam: return "team";
+		case lsDuel: return "duel"; // I was going to change this to "Duel" but maybe some stuff
+		case lsTeam: return "team"; // is case sensitive out there already, to process it..? --phil
 		case lsFFA:  return "FFA";
 		case lsCTF:  return "CTF";
 		case lsRA:   return "RA";
+		case lsHM:   return "HoonyMode";
 
 		default:	 return "unknown";
 	}
@@ -4646,10 +4676,10 @@ void lastscore_add ()
 	int from;
 	int i, s1 = 0, s2 = 0;
 	int k_ls = bound(0, cvar("__k_ls"), MAX_LASTSCORES-1);
-	char *e1, *e2, t1[128] = {0}, t2[128] = {0}, *name, date[64];
+	char *e1, *e2, t1[128] = {0}, t2[128] = {0}, *name, date[64], *extra;
 	lsType_t lst = lsUnknown;
 
-	e1 = e2 = "";
+	e1 = e2 = extra = "";
 	
 	if ( ( isRA() || isFFA() ) && ed1 && ed2 ) { // not the best way since get_ed_scores do not serve ghosts, so...
 		lst = (isRA() ? lsRA : lsFFA);
@@ -4657,6 +4687,24 @@ void lastscore_add ()
 		s1 = ed1->s.v.frags;
 		e2 = getname( ed2 );
 		s2 = ed2->s.v.frags;
+	}
+	else if   ( isHoonyMode() )
+		{
+		if ( HM_current_point_type() != HM_PT_FINAL )
+			return;
+
+		lst = lsHM;
+		for( i = from = 0, p = world; (p = find_plrghst( p, &from )) && i < 2; i++ ) {
+			if ( !i ) { // info about first dueler
+				e1 = getname( p );
+				s1 = p->s.v.frags;
+			}
+			else {	   // about second
+				e2 = getname( p );
+				s2 = p->s.v.frags;
+			}
+		extra = HM_lastscores_extra();
+		}
 	}
 	else if   ( isDuel() ) {
 		lst = lsDuel;
@@ -4705,7 +4753,7 @@ void lastscore_add ()
 	cvar_set(va("__k_ls_e2_%d", k_ls), e2);
 	cvar_set(va("__k_ls_t1_%d", k_ls), t1);
 	cvar_set(va("__k_ls_t2_%d", k_ls), t2);
-	cvar_set(va("__k_ls_s_%d", k_ls), va("%3d:%-3d \x8D %-8.8s %13.13s", s1, s2, g_globalvars.mapname, date));
+	cvar_set(va("__k_ls_s_%d", k_ls), va("%3d:%-3d \x8D %-8.8s %13.13s%s", s1, s2, g_globalvars.mapname, date, extra));
 
 	cvar_fset("__k_ls", ++k_ls % MAX_LASTSCORES);
 

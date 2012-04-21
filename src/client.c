@@ -880,6 +880,32 @@ gedict_t *Sub_SelectSpawnPoint( char *spawnname )
 	if ( spot )
 		return spot;
 
+// K_SPW_0_NONRANDOM changes "Normal QW respawns" to "pre-qtest nonrandom respawns"
+#ifdef K_SPW_0_NONRANDOM
+	static gedict_t *last_spot = NULL;
+	if (k_spw == 0)
+		{
+		spot = world;
+//G_bprint(2, "(%d,%s) last_spot = %d, spot = %d\n", FOFS(s.v.classname), spawnname, last_spot, spot);
+		if (last_spot != NULL)
+			{
+			for (; (spot = find( spot, FOFS( s.v.classname ), spawnname )); )
+				{
+				if (spot == last_spot)
+					{
+//G_bprint(2, "found spot==last_spot==%d\n", last_spot);
+					break;
+					}
+				}
+			}
+		last_spot = find(spot, FOFS(s.v.classname),spawnname);
+//G_bprint(2, "returning %d\n", last_spot);
+		if (last_spot == NULL) // wrap around
+			last_spot = find(world, FOFS(s.v.classname),spawnname);
+		return last_spot;
+		}
+#endif
+
 // ok, find all spots that don't have players nearby
 
 	spots = world;
@@ -1427,6 +1453,8 @@ void PutClientInServer( void )
 	{
 		spot = SelectSpawnPoint( coop ? "info_player_coop" : "info_player_start" );
 	}
+
+	if (isHoonyMode()) HM_rig_the_spawns(2, spot);
 
 	VectorCopy( spot->s.v.origin, self->s.v.origin );
 	self->s.v.origin[2] += 1;
@@ -3187,7 +3215,7 @@ void PlayerPostThink()
 		float velocity = sqrt(self->s.v.velocity[0] * self->s.v.velocity[0] + 
 							  self->s.v.velocity[1] * self->s.v.velocity[1]);
 
-		if ( !match_in_progress && !match_over && !k_captains && !k_matchLess )
+		if ( !match_in_progress && !match_over && !k_captains && !k_matchLess && !isHoonyMode() )
 		{
 			if ( iKey( self, "kf" ) & KF_SPEED ) {
 				float velocity_vert_abs	= fabs(self->s.v.velocity[2]);
@@ -3604,8 +3632,14 @@ void ClientObituary (gedict_t *targ, gedict_t *attacker)
 		if ( targ == attacker )
 		{
 			// killed self
-
-			targ->s.v.frags -= (dtSUICIDE == targ->deathtype ? 2 : 1);
+			if (isHoonyMode())
+				{
+				gedict_t *other_dude;
+				for (other_dude = world; (other_dude = find_plr(other_dude));) if (other_dude != targ)
+					other_dude->s.v.frags += 1; // hoonymode: suicide, etc, count as a point for the other player
+				}
+			else
+				targ->s.v.frags -= (dtSUICIDE == targ->deathtype ? 2 : 1);
 			logfrag (targ, targ);
 
 			if ( dtGL == targ->deathtype ) {
@@ -3646,7 +3680,7 @@ void ClientObituary (gedict_t *targ, gedict_t *attacker)
                 deathstring = " somehow becomes bored with life\n"; // hm, and how it is possible?
 
 			G_bprint (PRINT_MEDIUM, "%s%s", targ->s.v.netname, deathstring);
-
+		if (isHoonyMode()) HM_next_point(0, targ);
             return;
 		}
         else if ( ( (isTeam() || isCTF()) && streq( targteam, attackerteam ) && !strnull( attackerteam ) ) || coop )
@@ -3717,6 +3751,7 @@ void ClientObituary (gedict_t *targ, gedict_t *attacker)
 			}
 			else if ( dtSQUISH == targ->deathtype )	{
 				G_bprint (PRINT_MEDIUM, "%s squishes %s\n", attacker->s.v.netname, targ->s.v.netname);
+				if (isHoonyMode()) HM_next_point(attacker, targ);
 				return;	// !!! return !!!
 			}
 			else if ( dtSTOMP == targ->deathtype )	{
@@ -3731,6 +3766,7 @@ void ClientObituary (gedict_t *targ, gedict_t *attacker)
 						case 3:  deathstring = " was crushed by "; break;
 						default:
 							 	G_bprint (PRINT_MEDIUM, "%s stomps %s\n", attacker->s.v.netname, targ->s.v.netname);
+								if (isHoonyMode()) HM_next_point(attacker, targ);
 							 	return; // !!! return !!!
 					}
 				}
@@ -3776,6 +3812,8 @@ void ClientObituary (gedict_t *targ, gedict_t *attacker)
 						case 1:	deathstring = " was smeared by "; break;
 						default:
 								G_bprint (PRINT_MEDIUM, "%s rips %s a new one\n", attacker->s.v.netname, targ->s.v.netname);
+								// hoonymode shouldn't have quad but just in case...
+								if (isHoonyMode()) HM_next_point(attacker, targ);
 								return; // !!! return !!!
 					}
 
@@ -3856,12 +3894,19 @@ void ClientObituary (gedict_t *targ, gedict_t *attacker)
 
 			G_bprint (PRINT_MEDIUM,"%s%s%s%s", targ->s.v.netname, deathstring, attacker->s.v.netname, deathstring2);
 		}
-
+		if (isHoonyMode()) HM_next_point(attacker, targ);
 		return;
 	}
 	else // attacker->ct != ctPlayer
 	{
-        targ->s.v.frags -= 1;            // killed self
+		if (isHoonyMode())
+			{
+			gedict_t *other_dude;
+			for (other_dude = world; (other_dude = find_plr(other_dude));) if (other_dude != targ)
+				other_dude->s.v.frags += 1; // hoonymode: suicide, etc, count as a point for the other player
+			}
+		else
+	        	targ->s.v.frags -= 1;            // killed self
 		logfrag (targ, targ);
 
 		if ( (int)attacker->s.v.flags & FL_MONSTER )
@@ -3934,6 +3979,7 @@ void ClientObituary (gedict_t *targ, gedict_t *attacker)
 		}
 
 		G_bprint (PRINT_MEDIUM, "%s%s", targ->s.v.netname, deathstring );
+		if (isHoonyMode()) HM_next_point(0, targ);
 	}
 }
 
